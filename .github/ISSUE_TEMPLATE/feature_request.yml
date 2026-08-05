@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a focused improvement to EventStream
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operational problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the desired behavior without assuming a specific implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or smaller approaches did you consider?
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility and reliability impact
+      description: Note API, schema, migration, delivery, security, or UI implications.
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Roadmap area
+      options:
+        - MVP correctness
+        - Pending-message recovery and retries
+        - Alerts and rollups
+        - Authentication and multi-tenancy
+        - Streaming UI updates
+        - Observability and tracing
+        - Deployment
+        - Developer experience
+        - Other
+    validations:
+      required: true

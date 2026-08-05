@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+.cache
+.pnpm-store
+.vite
+*.tsbuildinfo
+.DS_Store
+*.log
