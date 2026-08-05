@@ -1,0 +1,35 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# JavaScript
+node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime data and logs
+*.log
+*.pid
+postgres-data/
+redis-data/
