@@ -21,6 +21,8 @@ from app.services.persistence import EventPersistenceService, PersistenceOutcome
 
 logger = logging.getLogger(__name__)
 
+_REDIS_BLOCK_TIMEOUT_GRACE_SECONDS = 5.0
+
 
 class EventPersister(Protocol):
     async def persist(self, envelope: StreamEnvelope) -> PersistenceOutcome: ...
@@ -178,9 +180,18 @@ async def _wait_or_stop(stop_event: asyncio.Event, wait_seconds: float) -> None:
             await stop_event.wait()
 
 
+def _create_worker_redis(settings: Settings) -> Redis:
+    block_seconds = settings.redis_block_ms / 1_000
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=False,
+        socket_timeout=block_seconds + _REDIS_BLOCK_TIMEOUT_GRACE_SECONDS,
+    )
+
+
 async def run_worker(settings: Settings) -> None:
     engine = create_database_engine(settings.database_url)
-    redis = Redis.from_url(settings.redis_url, decode_responses=False)
+    redis = _create_worker_redis(settings)
     persistence = EventPersistenceService(create_session_factory(engine))
     worker = EventWorker(cast(RedisClient, redis), persistence, settings)
     stop_event = asyncio.Event()
