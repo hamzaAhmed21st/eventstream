@@ -63,7 +63,7 @@ Never claim that a command, test, migration, build, health check, or data-flow s
 - Version public routes beneath `/api/v1`.
 - Treat accepted ingestion as Redis publication, not proof of PostgreSQL persistence.
 - Preserve response field meanings and pagination semantics. Additive changes are preferred; document breaking changes before implementation.
-- Validate finite numbers, timezone-aware timestamps, schema versions, metric names, service normalization, and tag bounds at the API boundary.
+- Validate safely bounded finite numbers, pagination, timezone-aware timestamps, schema versions, metric names, service normalization, and tag bounds at the API boundary.
 - Keep readiness dependency-aware and liveness process-only.
 
 ## Documentation expectations
@@ -72,7 +72,7 @@ Update `README.md`, `PLANS.md`, and `docs/architecture.md` when commands, runtim
 
 ## Git workflow
 
-Work on `feat/bootstrap-eventstream`. Keep commits logical and reviewable, verify the relevant milestone before committing, and inspect staged changes. Do not commit `.env`, tokens, credentials, virtual environments, dependency directories, database data, caches, coverage output, or generated builds. Do not push or open external GitHub artifacts without approval.
+Work on a focused feature branch based on the current default branch. Keep commits logical and reviewable, verify the relevant milestone before committing, and inspect staged changes. Do not commit `.env`, tokens, credentials, virtual environments, dependency directories, database data, caches, coverage output, or generated builds. Do not push or open external GitHub artifacts without approval.
 
 ## Security rules
 

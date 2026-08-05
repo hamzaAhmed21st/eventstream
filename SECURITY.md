@@ -2,8 +2,8 @@
 
 ## Supported code
 
-EventStream is an early local-development MVP. Security fixes target the current `main` branch and
-the active MVP feature branch; old commits and forks are not maintained releases.
+EventStream is an early local-development MVP. Security fixes target the current default branch
+and active review branches; old commits and forks are not maintained releases.
 
 The Compose configuration and `.env.example` contain intentionally simple localhost defaults.
 They are not suitable for an internet-facing or production environment.
@@ -29,6 +29,8 @@ For ordinary defects without security impact, use the bug report form.
   files, or captured production events.
 - Store runtime values in environment variables or an appropriate external secret manager.
 - Treat logs, CI output, fixtures, screenshots, and shell history as possible disclosure paths.
+- Keep structured failure logs to sanitized categories and safe identifiers. SQL statement
+  parameters and complete validation errors must not be emitted.
 - Rotate a credential immediately if it is exposed; removing it in a later commit is insufficient.
 - Keep database operations parameterized through SQLAlchemy and validate all client-controlled
   event fields.

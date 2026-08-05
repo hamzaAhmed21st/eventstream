@@ -20,7 +20,7 @@ FastAPI owns validation and stream publication. Redis decouples acceptance from 
 
 - **Client/generator:** creates stable UUIDs, UTC timestamps, realistic service metrics, and reports accepted versus failed submissions.
 - **API:** normalizes service names and timestamps, enforces the versioned schema and tag/value limits, publishes one event, exposes dependency health, and queries persisted data.
-- **Redis Stream:** durably queues accepted events for a named consumer group. An entry remaining pending signals unfinished processing.
+- **Redis Stream:** queues accepted events for a named consumer group. Local AOF uses `appendfsync everysec`, which supports restart recovery but is not a zero-loss or synchronously replicated durability guarantee. An entry remaining pending signals unfinished processing.
 - **Worker:** blocks for new entries, parses the canonical payload, persists it transactionally, treats an existing `event_id` as success, acknowledges only after durability, logs structured outcomes, and shuts down cleanly.
 - **PostgreSQL:** enforces event uniqueness, stores event metadata and timestamps, and serves indexed filtered/aggregate queries.
 - **Dashboard:** polls API health, metric summaries, and recent events; applies a service filter; and presents loading, empty, success, and error states accessibly.
@@ -64,9 +64,9 @@ sequenceDiagram
 
 - Invalid input fails before Redis and receives a 4xx response.
 - Redis publication failure prevents HTTP 202; the client may retry with the same `event_id`.
-- HTTP 202 proves stream publication only. It does not prove PostgreSQL persistence.
+- HTTP 202 confirms acceptance by the running Redis instance only. It does not prove PostgreSQL persistence, synchronous disk flush, replication, or zero-loss durability.
 - A worker parse or database error is logged and left unacknowledged. The MVP does not yet reclaim pending messages automatically.
-- A worker crash after commit but before acknowledgement causes redelivery; the database unique constraint makes it safe.
+- A worker crash after commit but before acknowledgement can leave the entry pending. The database unique constraint makes a later manual or future replay safe to deduplicate, but the current worker does not reclaim or redeliver it automatically.
 - Readiness returns failure when PostgreSQL or Redis cannot be reached, while liveness remains process-only.
 - Query/API failure produces an explicit dashboard error state; stale or invented fallback metrics are not shown.
 

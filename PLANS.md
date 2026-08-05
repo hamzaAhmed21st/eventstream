@@ -15,7 +15,7 @@ Authentication, alerts, rollups, streaming browser updates, retry/dead-letter po
 1. A client submits a versioned, timezone-aware metric event to FastAPI.
 2. Pydantic normalizes and validates the event; the API publishes one JSON payload to a named Redis Stream and returns HTTP 202.
 3. A worker performs blocking reads through a named consumer group.
-4. The worker inserts the event in PostgreSQL in a transaction. A unique `event_id` makes redelivery idempotent.
+4. The worker inserts the event in PostgreSQL in a transaction. A unique `event_id` makes a later replay of a pending entry safe to deduplicate.
 5. Only a committed insert or confirmed duplicate is acknowledged in Redis.
 6. Query endpoints read PostgreSQL for pagination and filtered aggregates.
 7. The React dashboard polls readiness, summaries, and recent events and never invents values.
@@ -53,15 +53,15 @@ See `docs/architecture.md` for diagrams and failure boundaries.
 - All specified routes, validation rules, stream behavior, model constraints, indexes, dashboard states, and generator controls exist.
 - The initial migration upgrades a real PostgreSQL database successfully.
 - Ruff, mypy, backend tests, TypeScript, frontend tests, frontend build, Docker image builds, and Compose validation pass.
-- PostgreSQL, Redis, API, worker, and frontend become healthy under Compose.
+- PostgreSQL, Redis, API, and frontend become healthy under Compose; the worker is running and log-clean.
 - A real synthetic event appears in Redis, is persisted by the worker, is returned by query and summary APIs, and is rendered from the dashboard's real API requests.
 - Documentation describes exact commands, verified capabilities, limitations, and roadmap without unsupported performance claims.
-- Logical commits exist locally; nothing has been pushed.
+- Logical commits preserve the foundation, MVP implementation, and focused corrective history for review.
 
 ## Verification commands
 
 ```text
-uv sync
+uv sync --locked
 make lint
 make typecheck
 make test
