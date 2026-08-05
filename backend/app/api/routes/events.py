@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.dependencies import get_event_publisher, get_event_query_service
-from app.api.parameters import build_event_filters
+from app.api.parameters import MAX_EVENT_PAGE, build_event_filters
 from app.schemas.events import (
     EventAccepted,
     EventCreate,
@@ -53,7 +53,7 @@ async def accept_event(
 @router.get("/events", response_model=EventPage)
 async def list_events(
     query_service: Annotated[EventQueryService, Depends(get_event_query_service)],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_EVENT_PAGE)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     service: Annotated[str | None, Query(max_length=128)] = None,
     metric_name: MetricName | None = None,
@@ -67,8 +67,11 @@ async def list_events(
 @router.get("/metrics/summary", response_model=MetricSummary)
 async def summarize_metrics(
     query_service: Annotated[EventQueryService, Depends(get_event_query_service)],
+    metric_name: Annotated[
+        MetricName,
+        Query(description="Metric whose values are summarized; required to preserve units."),
+    ],
     service: Annotated[str | None, Query(max_length=128)] = None,
-    metric_name: MetricName | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> MetricSummary:

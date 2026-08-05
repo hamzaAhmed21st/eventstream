@@ -80,10 +80,14 @@ class EventWorker:
                     count=self._settings.redis_batch_size,
                     block=self._settings.redis_block_ms,
                 )
-            except RedisError:
-                logger.exception(
+            except RedisError as exc:
+                logger.error(
                     "Redis Stream read failed",
-                    extra={"event_name": "worker.read.failed"},
+                    extra={
+                        "event_name": "worker.read.failed",
+                        "error_category": type(exc).__name__,
+                        "processing_stage": "stream_read",
+                    },
                 )
                 await _wait_or_stop(stop_event, 1.0)
                 continue
@@ -98,25 +102,33 @@ class EventWorker:
         display_message_id = _decode(message_id)
         try:
             envelope = _parse_envelope(fields)
-        except (KeyError, UnicodeDecodeError, ValidationError):
-            logger.exception(
+        except (KeyError, UnicodeDecodeError, ValidationError) as exc:
+            log_context: dict[str, object] = {
+                "event_name": "worker.message.invalid",
+                "stream_message_id": display_message_id,
+                "error_category": type(exc).__name__,
+                "processing_stage": "payload_validation",
+            }
+            if isinstance(exc, ValidationError):
+                log_context["validation_error_count"] = exc.error_count()
+            logger.warning(
                 "Invalid Redis Stream payload left pending",
-                extra={
-                    "event_name": "worker.message.invalid",
-                    "stream_message_id": display_message_id,
-                },
+                extra=log_context,
             )
             return
 
         try:
             outcome = await self._persistence.persist(envelope)
-        except SQLAlchemyError:
-            logger.exception(
+        except SQLAlchemyError as exc:
+            logger.error(
                 "Database persistence failed; message remains pending",
                 extra={
                     "event_name": "worker.message.persistence_failed",
                     "stream_message_id": display_message_id,
                     "event_id": str(envelope.event.event_id),
+                    "metric_name": envelope.event.metric_name.value,
+                    "error_category": type(exc).__name__,
+                    "processing_stage": "database_persistence",
                 },
             )
             return
@@ -127,14 +139,16 @@ class EventWorker:
                 self._settings.redis_consumer_group,
                 message_id,
             )
-        except RedisError:
-            logger.exception(
+        except RedisError as exc:
+            logger.error(
                 "Redis acknowledgement failed after safe database outcome",
                 extra={
                     "event_name": "worker.message.ack_failed",
                     "stream_message_id": display_message_id,
                     "event_id": str(envelope.event.event_id),
                     "persistence_outcome": outcome.value,
+                    "error_category": type(exc).__name__,
+                    "processing_stage": "stream_acknowledgement",
                 },
             )
             return

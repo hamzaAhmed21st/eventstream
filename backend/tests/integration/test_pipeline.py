@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 from sqlalchemy import Connection, delete, func, inspect, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.core.protocols import RedisClient, RedisStreamBatch
+from app.core.protocols import RedisClient
 from app.db.session import create_database_engine, create_session_factory
 from app.models.metric_event import MetricEvent
-from app.schemas.events import EventCreate, MetricName
-from app.services.persistence import EventPersistenceService
+from app.schemas.events import MAX_ABSOLUTE_METRIC_VALUE, EventCreate, MetricName, StreamEnvelope
+from app.services.persistence import EventPersistenceService, PersistenceOutcome
 from app.services.publisher import EventPublisher
 from app.services.queries import EventFilters, EventQueryService
 from app.workers.main import EventWorker
@@ -101,6 +104,8 @@ async def test_real_stream_worker_idempotency_queries_and_summary(
         redis_block_ms=100,
     )
     event_ids: list[UUID] = []
+    stop_event = asyncio.Event()
+    worker_task: asyncio.Task[None] | None = None
     try:
         await _assert_migrated_schema(engine)
         redis_client = cast(RedisClient, redis)
@@ -110,7 +115,8 @@ async def test_real_stream_worker_idempotency_queries_and_summary(
             EventPersistenceService(session_factory),
             settings,
         )
-        await worker.ensure_consumer_group()
+        worker_task = asyncio.create_task(worker.run(stop_event))
+        await _wait_for_consumer_group(redis, settings)
 
         base_timestamp = datetime(2026, 8, 5, 12, tzinfo=UTC)
         events = [
@@ -127,24 +133,14 @@ async def test_real_stream_worker_idempotency_queries_and_summary(
         for event in (*events, events[0]):
             await publisher.publish(event)
 
-        assert await redis.xlen(settings.redis_stream) == 4
-        batches = cast(
-            list[RedisStreamBatch],
-            await redis.xreadgroup(
-                settings.redis_consumer_group,
-                settings.redis_consumer_name,
-                {settings.redis_stream: ">"},
-                count=10,
-                block=1_000,
-            ),
+        await _wait_for_processed_stream(
+            redis,
+            settings,
+            session_factory,
+            event_ids,
+            expected_stream_entries=4,
+            expected_stored_rows=3,
         )
-        assert len(batches) == 1
-        assert len(batches[0][1]) == 4
-        for message_id, fields in batches[0][1]:
-            await worker.process_message(message_id, fields)
-
-        pending = await redis.xpending(settings.redis_stream, settings.redis_consumer_group)
-        assert pending["pending"] == 0
 
         async with session_factory() as session:
             stored_count = await session.scalar(
@@ -187,10 +183,138 @@ async def test_real_stream_worker_idempotency_queries_and_summary(
                 "most_recent_timestamp": None,
             }
     finally:
+        stop_event.set()
+        if worker_task is not None:
+            await asyncio.wait_for(worker_task, timeout=2)
         await _remove_test_rows(session_factory, event_ids)
         await redis.delete(settings.redis_stream)
         await redis.aclose()
         await engine.dispose()
+
+
+class FailingPersistence:
+    def __init__(self) -> None:
+        self.called = asyncio.Event()
+
+    async def persist(self, envelope: StreamEnvelope) -> PersistenceOutcome:
+        self.called.set()
+        raise OperationalError(
+            "INSERT",
+            {"event_id": str(envelope.event.event_id)},
+            OSError("isolated integration failure"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_leaves_failed_persistence_pending(test_redis_url: str) -> None:
+    redis = Redis.from_url(test_redis_url, decode_responses=False)
+    unique_suffix = uuid4().hex
+    settings = Settings(
+        _env_file=None,
+        redis_url=test_redis_url,
+        redis_stream=f"eventstream:test:failed:{unique_suffix}",
+        redis_consumer_group=f"eventstream-test-failed-workers-{unique_suffix}",
+        redis_consumer_name="integration-failing-worker",
+        redis_block_ms=100,
+    )
+    failing_persistence = FailingPersistence()
+    redis_client = cast(RedisClient, redis)
+    worker = EventWorker(redis_client, failing_persistence, settings)
+    publisher = EventPublisher(redis_client, settings.redis_stream)
+    stop_event = asyncio.Event()
+    worker_task = asyncio.create_task(worker.run(stop_event))
+    try:
+        await _wait_for_consumer_group(redis, settings)
+        await publisher.publish(
+            EventCreate(
+                service="checkout",
+                metric_name=MetricName.ERROR_COUNT,
+                value=1.0,
+                timestamp=datetime(2026, 8, 5, 12, tzinfo=UTC),
+            )
+        )
+        await asyncio.wait_for(failing_persistence.called.wait(), timeout=5)
+        pending = await redis.xpending(settings.redis_stream, settings.redis_consumer_group)
+        assert pending["pending"] == 1
+    finally:
+        stop_event.set()
+        await asyncio.wait_for(worker_task, timeout=2)
+        await redis.delete(settings.redis_stream)
+        await redis.aclose()
+
+
+@pytest.mark.asyncio
+async def test_summary_aggregates_maximum_accepted_values(test_database_url: str) -> None:
+    engine = create_database_engine(test_database_url)
+    session_factory = create_session_factory(engine)
+    persistence = EventPersistenceService(session_factory)
+    event_ids: list[UUID] = []
+    try:
+        for minute in range(2):
+            event = EventCreate(
+                service="aggregation-boundary",
+                metric_name=MetricName.LATENCY_MS,
+                value=MAX_ABSOLUTE_METRIC_VALUE,
+                timestamp=datetime(2026, 8, 5, 12, minute, tzinfo=UTC),
+            )
+            event_ids.append(event.event_id)
+            await persistence.persist(
+                StreamEnvelope(event=event, received_at=event.timestamp)
+            )
+
+        async with session_factory() as session:
+            summary = await EventQueryService(session).summarize(
+                EventFilters(
+                    service="aggregation-boundary",
+                    metric_name=MetricName.LATENCY_MS,
+                )
+            )
+        assert summary.event_count == 2
+        assert summary.average_value == MAX_ABSOLUTE_METRIC_VALUE
+        assert summary.sum_value == 2 * MAX_ABSOLUTE_METRIC_VALUE
+    finally:
+        await _remove_test_rows(session_factory, event_ids)
+        await engine.dispose()
+
+
+async def _wait_for_consumer_group(redis: Redis, settings: Settings) -> None:
+    async with asyncio.timeout(5):
+        while True:
+            try:
+                groups = await redis.xinfo_groups(settings.redis_stream)
+            except ResponseError:
+                groups = []
+            if groups:
+                return
+            await asyncio.sleep(0.05)
+
+
+async def _wait_for_processed_stream(
+    redis: Redis,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    event_ids: list[UUID],
+    *,
+    expected_stream_entries: int,
+    expected_stored_rows: int,
+) -> None:
+    async with asyncio.timeout(5):
+        while True:
+            async with session_factory() as session:
+                stored_count = await session.scalar(
+                    select(func.count(MetricEvent.id)).where(
+                        MetricEvent.event_id.in_(event_ids)
+                    )
+                )
+            group_state = (await redis.xinfo_groups(settings.redis_stream))[0]
+            if (
+                await redis.xlen(settings.redis_stream) == expected_stream_entries
+                and stored_count == expected_stored_rows
+                and group_state["pending"] == 0
+                and group_state["lag"] == 0
+            ):
+                return
+            await asyncio.sleep(0.05)
 
 
 async def _remove_test_rows(
