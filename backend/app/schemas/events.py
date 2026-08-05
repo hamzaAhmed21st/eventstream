@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MAX_TAGS = 20
 MAX_TAG_KEY_LENGTH = 64
 MAX_TAG_VALUE_LENGTH = 256
+MAX_ABSOLUTE_METRIC_VALUE = 1_000_000_000_000.0
 
 
 class MetricName(StrEnum):
@@ -27,7 +28,13 @@ class EventCreate(BaseModel):
     event_id: UUID = Field(default_factory=uuid4)
     service: str = Field(max_length=128)
     metric_name: MetricName
-    value: float = Field(allow_inf_nan=False, strict=True)
+    value: float = Field(
+        allow_inf_nan=False,
+        ge=-MAX_ABSOLUTE_METRIC_VALUE,
+        le=MAX_ABSOLUTE_METRIC_VALUE,
+        strict=True,
+        description="Finite telemetry value within the shared ingestion safety bound.",
+    )
     timestamp: datetime
     tags: dict[str, str] = Field(default_factory=dict)
     schema_version: int = Field(default=1, strict=True)

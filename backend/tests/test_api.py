@@ -9,7 +9,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_event_publisher, get_event_query_service
-from app.schemas.events import EventAccepted, EventCreate, EventPage, EventRead, MetricSummary
+from app.api.parameters import MAX_EVENT_PAGE
+from app.schemas.events import (
+    MAX_ABSOLUTE_METRIC_VALUE,
+    EventAccepted,
+    EventCreate,
+    EventPage,
+    EventRead,
+    MetricSummary,
+)
 from app.services.publisher import EventPublicationError, EventPublisher
 from app.services.queries import EventFilters, EventQueryService
 
@@ -202,6 +210,49 @@ def test_summary_contract_and_filters(app: FastAPI) -> None:
         "most_recent_value": 20.0,
         "most_recent_timestamp": "2026-08-05T17:00:00Z",
     }
+
+
+def test_summary_requires_metric_name(app: FastAPI) -> None:
+    query_service = StubQueryService()
+    app.dependency_overrides[get_event_query_service] = lambda: query_service
+
+    response = TestClient(app).get("/api/v1/metrics/summary")
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["query", "metric_name"]
+    assert query_service.filters is None
+
+
+def test_pagination_limit_prevents_database_offset_overflow(app: FastAPI) -> None:
+    query_service = StubQueryService()
+    app.dependency_overrides[get_event_query_service] = lambda: query_service
+    client = TestClient(app)
+
+    maximum = client.get("/api/v1/events", params={"page": MAX_EVENT_PAGE})
+    above_maximum = client.get("/api/v1/events", params={"page": MAX_EVENT_PAGE + 1})
+    huge = client.get(
+        "/api/v1/events",
+        params={"page": 9_223_372_036_854_775_808, "page_size": 100},
+    )
+
+    assert maximum.status_code == 200
+    assert maximum.json()["page"] == MAX_EVENT_PAGE
+    assert above_maximum.status_code == 422
+    assert huge.status_code == 422
+
+
+def test_metric_value_limit_is_enforced_by_ingestion_api(app: FastAPI) -> None:
+    publisher = RecordingPublisher()
+    override_publisher(app, publisher)
+    client = TestClient(app)
+    at_limit_payload = valid_payload()
+    at_limit_payload["value"] = MAX_ABSOLUTE_METRIC_VALUE
+    above_limit_payload = valid_payload()
+    above_limit_payload["value"] = MAX_ABSOLUTE_METRIC_VALUE + 1
+
+    assert client.post("/api/v1/events", json=at_limit_payload).status_code == 202
+    assert client.post("/api/v1/events", json=above_limit_payload).status_code == 422
+    assert len(publisher.events) == 1
 
 
 def test_query_timestamps_must_be_aware_and_ordered(app: FastAPI) -> None:

@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.events import EventCreate, MetricName
+from app.schemas.events import MAX_ABSOLUTE_METRIC_VALUE, EventCreate, MetricName
 
 
 def valid_event_data() -> dict[str, object]:
@@ -96,3 +96,26 @@ def test_non_utc_timezone_is_converted_to_utc() -> None:
     event = EventCreate.model_validate(data)
 
     assert event.timestamp == datetime(2026, 8, 5, 9, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-MAX_ABSOLUTE_METRIC_VALUE, MAX_ABSOLUTE_METRIC_VALUE],
+)
+def test_metric_value_limit_is_accepted(value: float) -> None:
+    data = valid_event_data()
+    data["value"] = value
+
+    assert EventCreate.model_validate(data).value == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-(MAX_ABSOLUTE_METRIC_VALUE + 1), MAX_ABSOLUTE_METRIC_VALUE + 1, 1e308],
+)
+def test_metric_values_above_safe_limit_are_rejected(value: float) -> None:
+    data = valid_event_data()
+    data["value"] = value
+
+    with pytest.raises(ValidationError):
+        EventCreate.model_validate(data)

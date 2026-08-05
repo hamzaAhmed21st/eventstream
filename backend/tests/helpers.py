@@ -8,9 +8,16 @@ from app.core.protocols import RedisFields, RedisScalar, RedisStreamBatch
 
 
 class FakeRedis:
-    def __init__(self, *, fail_ping: bool = False, fail_xadd: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_ping: bool = False,
+        fail_xadd: bool = False,
+        operation_trace: list[str] | None = None,
+    ) -> None:
         self.fail_ping = fail_ping
         self.fail_xadd = fail_xadd
+        self.operation_trace = operation_trace
         self.added: list[tuple[str, Mapping[str, str]]] = []
         self.acknowledged: list[tuple[str, str, tuple[RedisScalar, ...]]] = []
         self.groups: list[tuple[str, str, str, bool]] = []
@@ -49,6 +56,8 @@ class FakeRedis:
         return self.read_batches.pop(0) if self.read_batches else []
 
     async def xack(self, name: str, groupname: str, *ids: RedisScalar) -> int:
+        if self.operation_trace is not None:
+            self.operation_trace.append("xack")
         self.acknowledged.append((name, groupname, ids))
         return len(ids)
 
@@ -58,4 +67,3 @@ class FakeRedis:
 
 def stream_fields(json_payload: str) -> RedisFields:
     return {b"data": json_payload.encode("utf-8")}
-
