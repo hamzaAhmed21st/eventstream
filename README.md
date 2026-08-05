@@ -4,7 +4,7 @@ EventStream is a small end-to-end metrics platform built to demonstrate validate
 ingestion, asynchronous Redis Stream processing, idempotent PostgreSQL persistence, and a
 React dashboard backed by real query results.
 
-Current status: first MVP implementation on `feat/bootstrap-eventstream`. Its review gate is the
+Current status: the first MVP implementation is prepared for review. Its review gate is the
 verification sequence in this document: a capability should not be treated as verified merely
 because its code or configuration exists.
 
@@ -21,9 +21,12 @@ flowchart LR
     A -->|real JSON responses| D[React dashboard]
 ```
 
-The ingestion API returns HTTP `202 Accepted` only after Redis accepts the event. A 202 means
-“queued,” not “stored in PostgreSQL.” The worker acknowledges a stream message only after its
-database transaction commits or the external `event_id` is safely confirmed as a duplicate.
+The ingestion API returns HTTP `202 Accepted` only after the running Redis instance accepts the
+event. A 202 means “accepted into the stream,” not “stored in PostgreSQL” or synchronously
+replicated with a zero-loss guarantee. Local Redis uses AOF with `appendfsync everysec`, so an
+abrupt host failure can still lose a recently accepted entry. The worker acknowledges a stream
+message only after its database transaction commits or the external `event_id` is safely
+confirmed as a duplicate.
 
 The MVP includes:
 
@@ -68,7 +71,10 @@ make setup
 ```
 
 The values in `.env.example` are local-development defaults, not production credentials. If you
-change the PostgreSQL username, password, or database, update `DATABASE_URL` to match.
+change the PostgreSQL username, password, or database, update `DATABASE_URL` to match. Docker
+Compose automatically reads root `.env` values used in `docker-compose.yml`; Python processes
+started from the repository root also load `.env`. Make does not import `.env`, so pass test URL
+overrides in the shell or as Make variables.
 
 Build and run PostgreSQL, Redis, the API, worker, and frontend:
 
@@ -77,8 +83,9 @@ docker compose up --build
 ```
 
 The API container applies `alembic upgrade head` after PostgreSQL and Redis become healthy, then
-starts Uvicorn. The worker and frontend wait for API readiness. Stop the stack without deleting
-its named volumes:
+starts Uvicorn. The worker and frontend wait for API readiness. PostgreSQL, Redis, API, and
+frontend have Compose health checks; the worker is verified by its running state and structured
+logs. Stop the stack without deleting its named volumes:
 
 ```bash
 make down
@@ -137,7 +144,8 @@ database; generating a revision alone is not verification.
 Major non-destructive checks can also be run directly:
 
 ```bash
-uv sync
+uv sync --locked
+uv lock --check
 uv run ruff check backend scripts
 uv run mypy backend scripts
 uv run pytest
@@ -155,8 +163,20 @@ development data.
 `make test-backend` starts the Compose PostgreSQL and Redis services, creates the separate
 `eventstream_test` database if needed, applies Alembic to that database, and supplies Redis
 database 15 to the integration tests. Override `TEST_DATABASE_URL` or `TEST_REDIS_URL` when the
-safe local defaults do not match your environment. For a unit-only iteration without Docker,
-run `uv run pytest -m 'not integration'` explicitly.
+safe local defaults do not match your environment:
+
+```bash
+make test-backend \
+  TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/eventstream_test \
+  TEST_REDIS_URL=redis://localhost:6379/15
+```
+
+Make suppresses these credential-bearing command expansions. For a unit-only iteration without
+Docker, run `uv run pytest -m 'not integration'` explicitly.
+
+The Vite development server binds to `127.0.0.1` by default. A developer who deliberately needs
+LAN access can opt in with `pnpm --dir frontend dev --host 0.0.0.0`; this also exposes the local
+API proxy and should be used only on a trusted network.
 
 ## Send synthetic events
 
@@ -207,13 +227,18 @@ curl --fail-with-body -X POST http://localhost:8000/api/v1/events \
 Public endpoints are:
 
 - `POST /api/v1/events` — validate and publish an event, returning 202 after `XADD`;
-- `GET /api/v1/events` — list persisted events with pagination;
+- `GET /api/v1/events` — list persisted events with pages from 1 through 1,000,000 and page sizes
+  from 1 through 100;
 - `GET /api/v1/metrics/summary` — return count, min, max, average, and most recent data with
-  optional service, metric, start, and end filters;
+  required `metric_name` plus optional service, start, and end filters;
 - `GET /health/live` — report whether the API process is alive;
 - `GET /health/ready` — verify PostgreSQL and Redis connectivity.
 
 Use the Swagger UI for the authoritative request, query, and response schemas.
+
+Metric values must be finite and between `-1,000,000,000,000` and
+`1,000,000,000,000`, inclusive. This is a shared ingestion safety bound that prevents unsafe
+database aggregation; it does not define metric-specific business semantics.
 
 ## End-to-end verification
 
@@ -226,7 +251,7 @@ docker compose exec -T redis redis-cli XLEN eventstream:events
 docker compose exec -T postgres psql -U eventstream -d eventstream \
   -c 'SELECT event_id, service, metric_name, value FROM metric_events ORDER BY id DESC LIMIT 1;'
 curl --fail 'http://localhost:8000/api/v1/events?page=1&page_size=10'
-curl --fail 'http://localhost:8000/api/v1/metrics/summary?service=checkout'
+curl --fail 'http://localhost:8000/api/v1/metrics/summary?service=checkout&metric_name=latency_ms'
 ```
 
 Finally open the dashboard and verify in browser developer tools that its readiness, events, and
@@ -251,6 +276,11 @@ and [AGENTS.md](AGENTS.md). Security reporting is documented in [SECURITY.md](SE
 ## Known MVP limitations
 
 - Redis pending entries are not automatically reclaimed after a worker failure.
+- A crash after database commit but before acknowledgement can leave a pending entry. Its stable
+  `event_id` makes later manual or future recovery safe to deduplicate, but the current worker
+  does not automatically redeliver it.
+- Redis AOF improves local restart recovery but does not provide synchronous replication or a
+  zero-loss acceptance guarantee.
 - There are no bounded retry policy, dead-letter stream, or worker heartbeats.
 - Summaries scan raw events; rollups, retention management, and sliding windows are absent.
 - The dashboard polls; WebSockets and Server-Sent Events are deferred.

@@ -24,6 +24,11 @@ pnpm --dir frontend dev
 
 The full five-service path starts with `docker compose up --build`.
 
+The Vite development server binds to loopback by default. Only on a trusted network, opt into LAN
+access explicitly with `pnpm --dir frontend dev --host 0.0.0.0`; doing so also exposes its API
+proxy. Root `.env` is loaded by Compose and directly run Python processes, but Make does not
+import it. Pass test URL overrides as environment variables or Make command-line variables.
+
 ## Development workflow
 
 1. Start from an up-to-date branch and inspect `git status` before editing.
