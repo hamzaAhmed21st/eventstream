@@ -7,7 +7,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.config import Settings
 from app.schemas.events import EventCreate, StreamEnvelope
 from app.services.persistence import PersistenceOutcome
-from app.workers.main import EventWorker
+from app.workers.main import EventWorker, _create_worker_redis
 from tests.helpers import FakeRedis, stream_fields
 
 
@@ -93,3 +93,13 @@ async def test_worker_creates_named_group(settings: Settings) -> None:
         (settings.redis_stream, settings.redis_consumer_group, "0-0", True)
     ]
 
+
+async def test_worker_redis_timeout_exceeds_block_interval(settings: Settings) -> None:
+    redis = _create_worker_redis(settings)
+
+    try:
+        socket_timeout = redis.connection_pool.connection_kwargs["socket_timeout"]
+        assert socket_timeout == settings.redis_block_ms / 1_000 + 5.0
+        assert socket_timeout > settings.redis_block_ms / 1_000
+    finally:
+        await redis.aclose()
