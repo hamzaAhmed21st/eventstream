@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import time
-from collections.abc import Sequence
 
 import psycopg
 from psycopg import sql
@@ -17,16 +15,8 @@ DEFAULT_TEST_DATABASE_URL = (
 )
 
 
-def parse_args(argv: Sequence[str] | None = None) -> str:
-    parser = argparse.ArgumentParser(
-        description="Create a missing PostgreSQL database whose name contains 'test'."
-    )
-    parser.add_argument(
-        "--database-url",
-        default=os.getenv("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL),
-        help="isolated SQLAlchemy PostgreSQL URL (default: TEST_DATABASE_URL or local test DB)",
-    )
-    return str(parser.parse_args(argv).database_url)
+def get_test_database_url() -> str:
+    return os.getenv("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
 
 
 def validate_test_url(raw_url: str) -> URL:
@@ -69,8 +59,8 @@ def ensure_test_database(raw_url: str, *, attempts: int = 30) -> None:
     raise RuntimeError("PostgreSQL did not become ready for test database setup") from last_error
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    ensure_test_database(parse_args(argv))
+def main() -> int:
+    ensure_test_database(get_test_database_url())
     return 0
 
 
