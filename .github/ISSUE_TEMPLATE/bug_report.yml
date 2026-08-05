@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible EventStream defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve EventStream. Remove credentials, tokens, and sensitive event data before submitting.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest safe sequence that reproduces the behavior.
+      placeholder: |
+        1. Start the stack with ...
+        2. Send ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python, Node, Docker, branch/commit, and relevant non-secret configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and verification output
+      description: Paste concise, redacted output and say which checks actually ran.
+      render: shell
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - API and validation
+        - Redis publication
+        - Worker processing
+        - PostgreSQL or migrations
+        - Query APIs
+        - Dashboard
+        - Docker Compose
+        - Tests or CI
+        - Documentation
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, credentials, and sensitive production data.
+          required: true
