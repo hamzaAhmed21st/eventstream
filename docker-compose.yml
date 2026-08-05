@@ -27,7 +27,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
@@ -60,6 +60,8 @@ services:
       REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-eventstream-workers}
       REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-api}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
@@ -99,6 +101,8 @@ services:
       REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-eventstream-workers}
       REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-worker-1}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       api:
         condition: service_healthy

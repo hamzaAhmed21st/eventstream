@@ -31,7 +31,7 @@ help:
 	@echo "  make verify         Run all non-destructive quality gates"
 
 setup:
-	$(UV) sync
+	$(UV) sync --locked
 	$(PNPM) --dir frontend install --frozen-lockfile
 
 up:
@@ -50,12 +50,12 @@ test: test-backend test-frontend
 
 test-services:
 	$(COMPOSE) up -d --wait postgres redis
-	$(UV) run python scripts/prepare_test_database.py \
-		--database-url "$(TEST_DATABASE_URL)"
-	DATABASE_URL="$(TEST_DATABASE_URL)" $(UV) run alembic upgrade head
+	@TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+		$(UV) run python scripts/prepare_test_database.py
+	@DATABASE_URL="$(TEST_DATABASE_URL)" $(UV) run alembic upgrade head
 
 test-backend: test-services
-	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+	@TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
 		TEST_REDIS_URL="$(TEST_REDIS_URL)" \
 		$(UV) run pytest
 

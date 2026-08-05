@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 
 COPY alembic.ini ./
 COPY backend ./backend
