@@ -1,0 +1,79 @@
+[project]
+name = "eventstream"
+version = "0.1.0"
+description = "A small end-to-end metrics pipeline built with FastAPI, Redis Streams, PostgreSQL, and React."
+requires-python = "==3.14.*"
+dependencies = [
+  "alembic>=1.17.0",
+  "fastapi>=0.121.0",
+  "greenlet>=3.2.4",
+  "psycopg[binary]>=3.2.12",
+  "pydantic>=2.12.0",
+  "pydantic-settings>=2.11.0",
+  "redis>=6.4.0",
+  "sqlalchemy>=2.0.44",
+  "uvicorn[standard]>=0.37.0",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28.1",
+  "mypy>=1.18.2",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.2.0",
+  "ruff>=0.14.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]
+pythonpath = [".", "backend"]
+markers = [
+  "integration: tests that require isolated PostgreSQL and Redis services",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["backend"]
+
+[tool.ruff.lint]
+select = [
+  "ASYNC",
+  "B",
+  "C4",
+  "E",
+  "F",
+  "I",
+  "N",
+  "PERF",
+  "PIE",
+  "PT",
+  "RET",
+  "RUF",
+  "SIM",
+  "UP",
+  "W",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/migrations/versions/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+files = ["backend/app", "backend/tests", "scripts"]
+mypy_path = "backend"
+explicit_package_bases = true
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["alembic.*"]
+disallow_untyped_defs = false

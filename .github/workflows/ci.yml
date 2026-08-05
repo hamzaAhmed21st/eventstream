@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend quality and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: eventstream
+          POSTGRES_PASSWORD: eventstream
+          POSTGRES_DB: eventstream_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eventstream -d eventstream_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://eventstream:eventstream@localhost:5432/eventstream_test
+      REDIS_URL: redis://localhost:6379/15
+      TEST_DATABASE_URL: postgresql+psycopg://eventstream:eventstream@localhost:5432/eventstream_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+      REDIS_STREAM: eventstream:ci:events
+      REDIS_CONSUMER_GROUP: eventstream-ci-workers
+      REDIS_CONSUMER_NAME: ci-worker
+      CORS_ORIGINS: http://localhost:5173
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python 3.14.6
+        run: uv python install 3.14.6
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Verify migration
+        run: uv run alembic upgrade head
+
+      - name: Ruff
+        run: uv run ruff check backend scripts
+
+      - name: mypy
+        run: uv run mypy backend scripts
+
+      - name: pytest
+        run: uv run pytest
+
+  frontend:
+    name: Frontend quality and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm --dir frontend lint
+
+      - name: TypeScript
+        run: pnpm --dir frontend typecheck
+
+      - name: Vitest
+        run: pnpm --dir frontend test
+
+      - name: Production build
+        run: pnpm --dir frontend build
