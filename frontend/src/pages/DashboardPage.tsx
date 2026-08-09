@@ -10,6 +10,7 @@ import { EventMixChart } from "../components/EventMixChart";
 import { MetricCard, MetricCardSkeleton } from "../components/MetricCard";
 import { ReadinessBadge } from "../components/ReadinessBadge";
 import { RecentEventsTable } from "../components/RecentEventsTable";
+import { METRIC_DISPLAY } from "../metrics";
 import type { MetricSummaryResponse } from "../types/api";
 
 const compactNumberFormatter = new Intl.NumberFormat("en-US", {
@@ -50,9 +51,12 @@ function observationDetail(
 ): string {
   const count = summary?.event_count;
   if (count === undefined) {
-    return description;
+    return `All retained history · ${description}`;
   }
-  return `${decimalNumberFormatter.format(count)} observations · ${description}`;
+  return (
+    `${decimalNumberFormatter.format(count)} observations · ` +
+    `all retained history · ${description}`
+  );
 }
 
 function messageFromError(error: unknown): string {
@@ -99,7 +103,7 @@ export function DashboardPage() {
 
   function applyServiceFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedService = draftService.trim();
+    const normalizedService = draftService.trim().toLowerCase();
     setDraftService(normalizedService);
     setService(normalizedService);
   }
@@ -181,6 +185,8 @@ export function DashboardPage() {
 
         <div className="scope-row" aria-live="polite">
           <p>
+            <strong>All retained history</strong>
+            {" · "}
             {service === "" ? (
               <>Showing telemetry across all services</>
             ) : (
@@ -238,41 +244,50 @@ export function DashboardPage() {
                     ? null
                     : compactNumberFormatter.format(events.data.total)
                 }
-                detail="Persisted events in scope"
+                detail="All retained history in scope"
                 glyph="Σ"
                 tone="blue"
               />
               <MetricCard
-                label="Average latency"
-                value={summaryAverage(latency.data, " ms")}
+                label="All-time average latency"
+                value={summaryAverage(
+                  latency.data,
+                  ` ${METRIC_DISPLAY.latency_ms.unitSymbol}`,
+                )}
                 detail={observationDetail(latency.data, "mean latency")}
                 glyph="↗"
                 tone="cyan"
               />
               <MetricCard
-                label="Request sum"
+                label="All-time request sum"
                 value={summarySum(requests.data)}
                 detail={observationDetail(requests.data, "summed request_count")}
                 glyph="R"
                 tone="green"
               />
               <MetricCard
-                label="Error sum"
+                label="All-time error sum"
                 value={summarySum(errors.data)}
                 detail={observationDetail(errors.data, "summed error_count")}
                 glyph="!"
                 tone="rose"
               />
               <MetricCard
-                label="Average CPU"
-                value={summaryAverage(cpu.data)}
+                label="All-time average CPU"
+                value={summaryAverage(
+                  cpu.data,
+                  METRIC_DISPLAY.cpu_usage.unitSymbol,
+                )}
                 detail={observationDetail(cpu.data, "mean cpu_usage value")}
                 glyph="C"
                 tone="violet"
               />
               <MetricCard
-                label="Average memory"
-                value={summaryAverage(memory.data)}
+                label="All-time average memory"
+                value={summaryAverage(
+                  memory.data,
+                  METRIC_DISPLAY.memory_usage.unitSymbol,
+                )}
                 detail={observationDetail(memory.data, "mean memory_usage value")}
                 glyph="M"
                 tone="amber"

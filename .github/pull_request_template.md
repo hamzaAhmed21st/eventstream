@@ -19,7 +19,8 @@ explain why.
 - [ ] HTTP 202 is described only as successful Redis publication, not database persistence.
 - [ ] API response or pagination changes are documented and tested.
 - [ ] Schema changes include a reviewed Alembic migration.
-- [ ] Redis messages are acknowledged only after commit or confirmed duplication.
+- [ ] Redis messages are acknowledged only after commit, confirmed exact duplication, or an
+      explicitly classified permanent identifier conflict.
 - [ ] Dashboard values come from real API response shapes.
 
 ## Safety and documentation

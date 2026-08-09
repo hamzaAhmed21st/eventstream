@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 
@@ -11,6 +12,7 @@ from tests.helpers import FakeRedis
 
 def make_event() -> EventCreate:
     return EventCreate(
+        event_id=UUID("5f47ab50-0f70-476f-9fe6-3f72a0ffedaf"),
         service="api",
         metric_name="request_count",
         value=1,
@@ -39,4 +41,3 @@ async def test_publisher_surfaces_redis_failure() -> None:
 
     with pytest.raises(EventPublicationError):
         await publisher.publish(make_event())
-

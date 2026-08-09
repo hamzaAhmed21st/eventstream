@@ -6,11 +6,14 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.events import MAX_ABSOLUTE_METRIC_VALUE, EventCreate, MetricName
+from app.schemas.events import EventCreate, MetricName
+
+TEST_EVENT_ID = UUID("dc20c5cd-4f19-4f43-a0bf-4069ccab8a82")
 
 
 def valid_event_data() -> dict[str, object]:
     return {
+        "event_id": str(TEST_EVENT_ID),
         "service": "  Checkout-API  ",
         "metric_name": "latency_ms",
         "value": 42.5,
@@ -20,27 +23,29 @@ def valid_event_data() -> dict[str, object]:
     }
 
 
-def test_valid_event_is_normalized_and_default_id_is_stable() -> None:
+def test_valid_event_is_normalized_and_preserves_client_id() -> None:
     event = EventCreate.model_validate(valid_event_data())
 
-    assert isinstance(event.event_id, UUID)
-    assert event.event_id == event.event_id
+    assert event.event_id == TEST_EVENT_ID
     assert event.service == "checkout-api"
     assert event.metric_name is MetricName.LATENCY_MS
     assert event.timestamp == datetime(2026, 8, 5, 17, tzinfo=UTC)
 
 
-def test_default_event_ids_are_unique_per_event() -> None:
-    first = EventCreate.model_validate(valid_event_data())
-    second = EventCreate.model_validate(valid_event_data())
+def test_event_id_is_required() -> None:
+    data = valid_event_data()
+    del data["event_id"]
 
-    assert first.event_id != second.event_id
+    with pytest.raises(ValidationError):
+        EventCreate.model_validate(data)
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("service", "   "),
+        ("service", "checkout\x00api"),
+        ("service", "x" * 129),
         ("metric_name", "disk_usage"),
         ("value", float("nan")),
         ("value", float("inf")),
@@ -70,6 +75,8 @@ def test_invalid_event_fields_are_rejected(field: str, value: object) -> None:
         {"k" * 65: "value"},
         {"key": "v" * 257},
         {"": "value"},
+        {"nul\x00key": "value"},
+        {"key": "nul\x00value"},
     ],
 )
 def test_tag_bounds_are_enforced(tags: dict[str, str]) -> None:
@@ -89,6 +96,15 @@ def test_null_tags_are_normalized_to_empty_map() -> None:
     assert event.tags == {}
 
 
+def test_service_length_is_checked_after_normalization() -> None:
+    data = valid_event_data()
+    data["service"] = f"  {'A' * 128}  "
+
+    event = EventCreate.model_validate(data)
+
+    assert event.service == "a" * 128
+
+
 def test_non_utc_timezone_is_converted_to_utc() -> None:
     data = valid_event_data()
     data["timestamp"] = datetime(2026, 8, 5, 12, tzinfo=timezone(timedelta(hours=3)))
@@ -99,22 +115,49 @@ def test_non_utc_timezone_is_converted_to_utc() -> None:
 
 
 @pytest.mark.parametrize(
-    "value",
-    [-MAX_ABSOLUTE_METRIC_VALUE, MAX_ABSOLUTE_METRIC_VALUE],
+    ("metric_name", "value"),
+    [
+        (MetricName.LATENCY_MS, 0.0),
+        (MetricName.LATENCY_MS, 86_400_000.0),
+        (MetricName.REQUEST_COUNT, 0.0),
+        (MetricName.REQUEST_COUNT, 1_000_000_000.0),
+        (MetricName.ERROR_COUNT, 1_000_000_000.0),
+        (MetricName.CPU_USAGE, 0.0),
+        (MetricName.CPU_USAGE, 100.0),
+        (MetricName.MEMORY_USAGE, 100.0),
+    ],
 )
-def test_metric_value_limit_is_accepted(value: float) -> None:
+def test_metric_contract_boundaries_are_accepted(
+    metric_name: MetricName,
+    value: float,
+) -> None:
     data = valid_event_data()
+    data["metric_name"] = metric_name
     data["value"] = value
 
     assert EventCreate.model_validate(data).value == value
 
 
 @pytest.mark.parametrize(
-    "value",
-    [-(MAX_ABSOLUTE_METRIC_VALUE + 1), MAX_ABSOLUTE_METRIC_VALUE + 1, 1e308],
+    ("metric_name", "value"),
+    [
+        (MetricName.LATENCY_MS, -0.1),
+        (MetricName.LATENCY_MS, 86_400_000.1),
+        (MetricName.REQUEST_COUNT, -1.0),
+        (MetricName.REQUEST_COUNT, 1.5),
+        (MetricName.REQUEST_COUNT, 1_000_000_001.0),
+        (MetricName.ERROR_COUNT, 0.5),
+        (MetricName.CPU_USAGE, -0.1),
+        (MetricName.CPU_USAGE, 100.1),
+        (MetricName.MEMORY_USAGE, 100.1),
+    ],
 )
-def test_metric_values_above_safe_limit_are_rejected(value: float) -> None:
+def test_values_outside_metric_contract_are_rejected(
+    metric_name: MetricName,
+    value: float,
+) -> None:
     data = valid_event_data()
+    data["metric_name"] = metric_name
     data["value"] = value
 
     with pytest.raises(ValidationError):

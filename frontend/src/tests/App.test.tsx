@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
+import { METRIC_DISPLAY } from "../metrics";
 import type {
   EventsResponse,
   MetricEvent,
@@ -180,12 +181,28 @@ describe("EventStream dashboard", () => {
     expect(await screen.findByText("128.4 ms")).toBeInTheDocument();
     expect(screen.getByText("12.5K")).toBeInTheDocument();
     expect(screen.getByText("43")).toBeInTheDocument();
-    expect(screen.getByText("48.31")).toBeInTheDocument();
-    expect(screen.getByText("67.82")).toBeInTheDocument();
+    expect(screen.getByText("48.31%")).toBeInTheDocument();
+    expect(screen.getByText("67.82%")).toBeInTheDocument();
+    expect(screen.getByText("All-time average latency")).toBeInTheDocument();
+    expect(screen.getByText("All-time request sum")).toBeInTheDocument();
+    expect(screen.getByText("All-time error sum")).toBeInTheDocument();
+    expect(screen.getByText("All-time average CPU")).toBeInTheDocument();
+    expect(screen.getByText("All-time average memory")).toBeInTheDocument();
+    expect(
+      screen.getByText("All retained history", {
+        selector: ".scope-row strong",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("All retained history in scope")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "322 observations · all retained history · mean latency",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Dependencies ready")).toBeInTheDocument();
   });
 
-  it("renders a truthful empty state for an empty event page", async () => {
+  it("renders an empty event-table state when the event page is empty", async () => {
     installSuccessfulApi({
       items: [],
       page: 1,
@@ -208,7 +225,7 @@ describe("EventStream dashboard", () => {
     await screen.findByText("checkout");
 
     const filter = screen.getByRole("combobox", { name: "Filter by service" });
-    await user.type(filter, "  payments  ");
+    await user.type(filter, "  PAYments  ");
     await user.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
@@ -217,17 +234,23 @@ describe("EventStream dashboard", () => {
         .filter((url) => url.searchParams.get("service") === "payments");
       expect(filteredRequests).toHaveLength(6);
     });
+    expect(filter).toHaveValue("payments");
     expect(screen.getByText("payments", { selector: ".scope-row strong" })).toBeInTheDocument();
   });
 
-  it("renders persisted event fields from the documented response shape", async () => {
+  it("renders event fields from the documented API response shape", async () => {
     installSuccessfulApi();
 
     render(<App />);
 
     const table = await screen.findByRole("table");
     expect(within(table).getByText("checkout")).toBeInTheDocument();
-    expect(within(table).getByText("Latency")).toBeInTheDocument();
+    expect(
+      within(table).getByText(METRIC_DISPLAY.latency_ms.label),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByText(METRIC_DISPLAY.request_count.label),
+    ).toBeInTheDocument();
     expect(within(table).getByText("128.4")).toBeInTheDocument();
     expect(within(table).getByText("region: us-central")).toBeInTheDocument();
     expect(screen.getByText("Showing 2 of 2,481")).toBeInTheDocument();

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import socket
+
 import pytest
 from scripts.prepare_test_database import get_test_database_url
 
@@ -33,6 +35,35 @@ def test_json_encoded_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
         "http://localhost:5173",
         "https://dashboard.example.test",
     ]
+
+
+def test_missing_consumer_name_uses_runtime_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("REDIS_CONSUMER_NAME", raising=False)
+    monkeypatch.setattr(socket, "gethostname", lambda: "eventstream-worker-host")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_consumer_name == "eventstream-worker-host"
+
+
+@pytest.mark.parametrize("consumer_name", ["", "   "])
+def test_blank_consumer_name_uses_runtime_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+    consumer_name: str,
+) -> None:
+    monkeypatch.setattr(socket, "gethostname", lambda: "eventstream-worker-host")
+
+    settings = Settings(_env_file=None, redis_consumer_name=consumer_name)
+
+    assert settings.redis_consumer_name == "eventstream-worker-host"
+
+
+def test_explicit_consumer_name_is_trimmed() -> None:
+    settings = Settings(_env_file=None, redis_consumer_name="  worker-a  ")
+
+    assert settings.redis_consumer_name == "worker-a"
 
 
 async def test_database_engine_hides_statement_parameters() -> None:

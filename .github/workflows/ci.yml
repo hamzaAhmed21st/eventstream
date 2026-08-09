@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "feat/**"
+      - "fix/**"
+      - "chore/**"
   pull_request:
   workflow_dispatch:
 
@@ -75,8 +77,11 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked
 
-      - name: Verify migration
-        run: uv run alembic upgrade head
+      - name: Verify migration state against PostgreSQL
+        run: |
+          uv run alembic upgrade head
+          uv run alembic current
+          uv run alembic check
 
       - name: Ruff
         run: uv run ruff check backend scripts
@@ -124,8 +129,8 @@ jobs:
       - name: Production build
         run: pnpm --dir frontend build
 
-  compose-smoke:
-    name: Containerized stack smoke test
+  compose-event-path-smoke:
+    name: Containerized real event-path smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -141,16 +146,285 @@ jobs:
       - name: Start stack and wait for health
         run: docker compose up -d --wait --wait-timeout 180
 
-      - name: Confirm migrations and application boundaries
+      - name: Confirm migration state and application health
         run: |
           docker compose exec -T api uv run alembic upgrade head
           docker compose exec -T api uv run alembic current
+          docker compose exec -T api uv run alembic check
           curl --fail --retry 10 --retry-all-errors --retry-delay 2 \
             http://127.0.0.1:8000/health/live
           curl --fail --retry 10 --retry-all-errors --retry-delay 2 \
             http://127.0.0.1:8000/health/ready
           curl --fail --retry 10 --retry-all-errors --retry-delay 2 \
             http://127.0.0.1:5173/health/ready
+
+      - name: Verify API to Redis to worker to PostgreSQL to frontend path
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from datetime import UTC, datetime
+
+          API_BASE = "http://127.0.0.1:8000"
+          FRONTEND_BASE = "http://127.0.0.1:5173"
+          EVENT_ID = "20d9af04-84f3-4dc8-b001-5473258eec0d"
+          EVENT_TIMESTAMP = "2026-08-09T12:34:56Z"
+          SERVICE = "ci-smoke"
+          STREAM = "eventstream:events"
+          CONSUMER_GROUP = "eventstream-workers"
+          EVENT = {
+              "event_id": EVENT_ID,
+              "service": SERVICE,
+              "metric_name": "latency_ms",
+              "value": 42.5,
+              "timestamp": EVENT_TIMESTAMP,
+              "tags": {
+                  "path": "http-redis-worker-postgres",
+                  "source": "compose-ci",
+              },
+              "schema_version": 1,
+          }
+
+
+          def request_json(url, payload=None):
+              body = None
+              headers = {"Accept": "application/json"}
+              if payload is not None:
+                  body = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              request = urllib.request.Request(url, data=body, headers=headers)
+              try:
+                  with urllib.request.urlopen(request, timeout=5) as response:
+                      return response.status, json.loads(response.read())
+              except urllib.error.HTTPError as exc:
+                  response_body = exc.read().decode("utf-8", errors="replace")
+                  raise AssertionError(
+                      f"{request.get_method()} {url} returned {exc.code}: {response_body}"
+                  ) from exc
+
+
+          def compose_output(*args):
+              completed = subprocess.run(
+                  ["docker", "compose", "exec", "-T", *args],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              return completed.stdout.strip()
+
+
+          def poll(label, probe, timeout_seconds=45):
+              deadline = time.monotonic() + timeout_seconds
+              last_observation = None
+              while time.monotonic() < deadline:
+                  try:
+                      ready, last_observation = probe()
+                      if ready:
+                          print(f"PASS: {label}: {last_observation}")
+                          return last_observation
+                  except Exception as exc:
+                      last_observation = f"{type(exc).__name__}: {exc}"
+                  time.sleep(0.5)
+              raise AssertionError(
+                  f"Timed out after {timeout_seconds}s waiting for {label}; "
+                  f"last observation: {last_observation!r}"
+              )
+
+
+          def assert_timestamp(actual, expected):
+              actual_datetime = datetime.fromisoformat(actual.replace("Z", "+00:00"))
+              expected_datetime = datetime.fromisoformat(expected.replace("Z", "+00:00"))
+              assert actual_datetime.astimezone(UTC) == expected_datetime.astimezone(UTC), (
+                  actual,
+                  expected,
+              )
+
+
+          def assert_event(item):
+              assert item["event_id"] == EVENT_ID, item
+              assert item["service"] == SERVICE, item
+              assert item["metric_name"] == EVENT["metric_name"], item
+              assert item["value"] == EVENT["value"], item
+              assert_timestamp(item["timestamp"], EVENT_TIMESTAMP)
+              assert item["tags"] == EVENT["tags"], item
+              assert item["schema_version"] == EVENT["schema_version"], item
+
+
+          def assert_summary(summary):
+              assert summary["event_count"] == 1, summary
+              for field in (
+                  "min_value",
+                  "max_value",
+                  "average_value",
+                  "sum_value",
+                  "most_recent_value",
+              ):
+                  assert summary[field] == EVENT["value"], summary
+              assert_timestamp(summary["most_recent_timestamp"], EVENT_TIMESTAMP)
+
+
+          def event_page(base_url):
+              query = urllib.parse.urlencode(
+                  {
+                      "service": SERVICE,
+                      "metric_name": EVENT["metric_name"],
+                      "page": 1,
+                      "page_size": 10,
+                  }
+              )
+              status, page = request_json(f"{base_url}/api/v1/events?{query}")
+              assert status == 200, (status, page)
+              return page
+
+
+          def summary(base_url):
+              query = urllib.parse.urlencode(
+                  {"service": SERVICE, "metric_name": EVENT["metric_name"]}
+              )
+              status, body = request_json(
+                  f"{base_url}/api/v1/metrics/summary?{query}"
+              )
+              assert status == 200, (status, body)
+              return body
+
+
+          def persisted_page_probe():
+              page = event_page(API_BASE)
+              return page.get("total") == 1 and len(page.get("items", [])) == 1, page
+
+
+          def redis_group_mapping(group):
+              if isinstance(group, dict):
+                  return group
+              if isinstance(group, list) and len(group) % 2 == 0:
+                  return dict(zip(group[::2], group[1::2], strict=True))
+              raise AssertionError(f"Unexpected XINFO GROUPS entry: {group!r}")
+
+
+          def redis_consumed_probe(expected_entries):
+              stream_length = int(compose_output("redis", "redis-cli", "--raw", "XLEN", STREAM))
+              raw_groups = compose_output(
+                  "redis", "redis-cli", "--json", "XINFO", "GROUPS", STREAM
+              )
+              groups = [redis_group_mapping(group) for group in json.loads(raw_groups)]
+              group = next(
+                  (item for item in groups if item.get("name") == CONSUMER_GROUP),
+                  None,
+              )
+              observation = {"stream_length": stream_length, "group": group}
+              if group is None:
+                  return False, observation
+              pending = int(group["pending"])
+              lag = group.get("lag")
+              entries_read = group.get("entries-read")
+              ready = (
+                  stream_length == expected_entries
+                  and pending == 0
+                  and lag is not None
+                  and int(lag) == 0
+                  and entries_read is not None
+                  and int(entries_read) == expected_entries
+              )
+              return ready, observation
+
+
+          accepted_status, accepted = request_json(f"{API_BASE}/api/v1/events", EVENT)
+          assert accepted_status == 202, (accepted_status, accepted)
+          assert accepted["event_id"] == EVENT_ID, accepted
+          assert accepted["status"] == "accepted", accepted
+          assert accepted["stream_id"], accepted
+          print(f"PASS: first HTTP ingestion accepted as stream entry {accepted['stream_id']}")
+
+          api_page = poll("event to become queryable through the API", persisted_page_probe)
+          assert_event(api_page["items"][0])
+          api_summary = summary(API_BASE)
+          assert_summary(api_summary)
+          print("PASS: API event and summary responses match the submitted payload")
+
+          database_sql = f"""
+          SELECT json_build_object(
+              'event_id', event_id::text,
+              'service', service,
+              'metric_name', metric_name,
+              'value', value,
+              'timestamp', to_char(
+                  event_timestamp AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'
+              ),
+              'tags', tags,
+              'schema_version', schema_version
+          )::text
+          FROM metric_events
+          WHERE event_id = '{EVENT_ID}';
+          """
+          database_row = json.loads(
+              compose_output(
+                  "postgres",
+                  "psql",
+                  "-X",
+                  "-A",
+                  "-t",
+                  "-v",
+                  "ON_ERROR_STOP=1",
+                  "-U",
+                  "eventstream",
+                  "-d",
+                  "eventstream",
+                  "-c",
+                  database_sql,
+              )
+          )
+          assert_event(database_row)
+          print("PASS: PostgreSQL row matches the complete submitted client payload")
+
+          poll(
+              "first Redis entry to be consumed and acknowledged",
+              lambda: redis_consumed_probe(1),
+          )
+
+          replay_status, replay = request_json(f"{API_BASE}/api/v1/events", EVENT)
+          assert replay_status == 202, (replay_status, replay)
+          assert replay["event_id"] == EVENT_ID, replay
+          assert replay["status"] == "accepted", replay
+          assert replay["stream_id"] and replay["stream_id"] != accepted["stream_id"], replay
+          print(f"PASS: identical replay accepted as stream entry {replay['stream_id']}")
+
+          poll(
+              "replayed Redis entry to be consumed with zero pending and zero lag",
+              lambda: redis_consumed_probe(2),
+          )
+          database_count = int(
+              compose_output(
+                  "postgres",
+                  "psql",
+                  "-X",
+                  "-A",
+                  "-t",
+                  "-v",
+                  "ON_ERROR_STOP=1",
+                  "-U",
+                  "eventstream",
+                  "-d",
+                  "eventstream",
+                  "-c",
+                  f"SELECT count(*) FROM metric_events WHERE event_id = '{EVENT_ID}';",
+              )
+          )
+          assert database_count == 1, database_count
+          print("PASS: identical replay left exactly one PostgreSQL row")
+
+          proxied_page = event_page(FRONTEND_BASE)
+          assert proxied_page["total"] == 1, proxied_page
+          assert len(proxied_page["items"]) == 1, proxied_page
+          assert_event(proxied_page["items"][0])
+          proxied_summary = summary(FRONTEND_BASE)
+          assert_summary(proxied_summary)
+          print("PASS: frontend nginx proxied real event and summary API responses")
+          PY
 
       - name: Show service logs after failure
         if: failure()

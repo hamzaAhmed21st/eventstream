@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import get_event_publisher, get_event_query_service
 from app.api.parameters import MAX_EVENT_PAGE
 from app.schemas.events import (
-    MAX_ABSOLUTE_METRIC_VALUE,
     EventAccepted,
     EventCreate,
     EventPage,
@@ -24,6 +23,7 @@ from app.services.queries import EventFilters, EventQueryService
 
 def valid_payload() -> dict[str, object]:
     return {
+        "event_id": "d98840c6-68e3-4733-8fcd-f9b86ca15bb8",
         "service": "  Checkout  ",
         "metric_name": "latency_ms",
         "value": 12.5,
@@ -96,7 +96,7 @@ def override_publisher(app: FastAPI, publisher: RecordingPublisher) -> None:
     app.dependency_overrides[get_event_publisher] = lambda: cast(EventPublisher, publisher)
 
 
-def test_valid_event_is_accepted_only_after_publication(app: FastAPI) -> None:
+def test_valid_event_returns_202_after_publisher_succeeds(app: FastAPI) -> None:
     publisher = RecordingPublisher()
     override_publisher(app, publisher)
 
@@ -104,7 +104,7 @@ def test_valid_event_is_accepted_only_after_publication(app: FastAPI) -> None:
 
     assert response.status_code == 202
     response_body = EventAccepted.model_validate(response.json())
-    assert isinstance(response_body.event_id, UUID)
+    assert response_body.event_id == UUID("d98840c6-68e3-4733-8fcd-f9b86ca15bb8")
     assert response_body.status == "accepted"
     assert response_body.stream_id == "1700000000000-0"
     assert publisher.events[0].event_id == response_body.event_id
@@ -126,6 +126,8 @@ def test_invalid_ingestion_payloads_return_422_without_publication(app: FastAPI)
     invalid_payloads: list[dict[str, object]] = []
     for field, value in (
         ("service", "  "),
+        ("service", "checkout\x00api"),
+        ("service", "x" * 129),
         ("metric_name", "unsupported"),
         ("timestamp", "not-a-time"),
         ("timestamp", "2026-08-05T12:00:00"),
@@ -133,6 +135,8 @@ def test_invalid_ingestion_payloads_return_422_without_publication(app: FastAPI)
         ("tags", {f"key-{index}": "value" for index in range(21)}),
         ("tags", {"x" * 65: "value"}),
         ("tags", {"key": "x" * 257}),
+        ("tags", {"nul\x00key": "value"}),
+        ("tags", {"key": "nul\x00value"}),
     ):
         payload = valid_payload()
         payload[field] = value
@@ -144,6 +148,18 @@ def test_invalid_ingestion_payloads_return_422_without_publication(app: FastAPI)
     assert publisher.events == []
 
 
+def test_missing_event_id_returns_422_without_publication(app: FastAPI) -> None:
+    publisher = RecordingPublisher()
+    override_publisher(app, publisher)
+    payload = valid_payload()
+    del payload["event_id"]
+
+    response = TestClient(app).post("/api/v1/events", json=payload)
+
+    assert response.status_code == 422
+    assert publisher.events == []
+
+
 @pytest.mark.parametrize("value_literal", ["NaN", "Infinity", "-Infinity"])
 def test_non_finite_json_numbers_return_422_without_publication(
     app: FastAPI,
@@ -152,7 +168,8 @@ def test_non_finite_json_numbers_return_422_without_publication(
     publisher = RecordingPublisher()
     override_publisher(app, publisher)
     payload = (
-        '{"service":"checkout","metric_name":"latency_ms","value":'
+        '{"event_id":"d98840c6-68e3-4733-8fcd-f9b86ca15bb8",'
+        '"service":"checkout","metric_name":"latency_ms","value":'
         f'{value_literal},"timestamp":"2026-08-05T12:00:00Z"}}'
     )
 
@@ -223,7 +240,7 @@ def test_summary_requires_metric_name(app: FastAPI) -> None:
     assert query_service.filters is None
 
 
-def test_pagination_limit_prevents_database_offset_overflow(app: FastAPI) -> None:
+def test_pagination_accepts_maximum_page_and_rejects_larger_values(app: FastAPI) -> None:
     query_service = StubQueryService()
     app.dependency_overrides[get_event_query_service] = lambda: query_service
     client = TestClient(app)
@@ -241,18 +258,30 @@ def test_pagination_limit_prevents_database_offset_overflow(app: FastAPI) -> Non
     assert huge.status_code == 422
 
 
-def test_metric_value_limit_is_enforced_by_ingestion_api(app: FastAPI) -> None:
+@pytest.mark.parametrize(
+    ("metric_name", "value"),
+    [
+        ("latency_ms", -1.0),
+        ("request_count", 1.5),
+        ("cpu_usage", 100.1),
+        ("memory_usage", -0.1),
+    ],
+)
+def test_metric_contract_is_enforced_by_ingestion_api(
+    app: FastAPI,
+    metric_name: str,
+    value: float,
+) -> None:
     publisher = RecordingPublisher()
     override_publisher(app, publisher)
-    client = TestClient(app)
-    at_limit_payload = valid_payload()
-    at_limit_payload["value"] = MAX_ABSOLUTE_METRIC_VALUE
-    above_limit_payload = valid_payload()
-    above_limit_payload["value"] = MAX_ABSOLUTE_METRIC_VALUE + 1
+    payload = valid_payload()
+    payload["metric_name"] = metric_name
+    payload["value"] = value
 
-    assert client.post("/api/v1/events", json=at_limit_payload).status_code == 202
-    assert client.post("/api/v1/events", json=above_limit_payload).status_code == 422
-    assert len(publisher.events) == 1
+    response = TestClient(app).post("/api/v1/events", json=payload)
+
+    assert response.status_code == 422
+    assert publisher.events == []
 
 
 def test_query_timestamps_must_be_aware_and_ordered(app: FastAPI) -> None:
