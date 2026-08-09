@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send deterministic synthetic metric events to an EventStream API."""
+"""Send synthetic events with seeded metric content and fresh identities."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import FrameType
-from uuid import UUID
+from uuid import uuid4
 
 import httpx
 
@@ -73,8 +73,8 @@ def service_list(value: str) -> tuple[str, ...]:
 def parse_args(argv: Sequence[str] | None = None) -> GeneratorConfig:
     parser = argparse.ArgumentParser(
         description=(
-            "Send realistic synthetic metrics. Omit --count to continue until "
-            "SIGINT or SIGTERM."
+            "Send synthetic metrics with seeded content and fresh event IDs. "
+            "Omit --count to continue until SIGINT or SIGTERM."
         )
     )
     parser.add_argument(
@@ -103,7 +103,10 @@ def parse_args(argv: Sequence[str] | None = None) -> GeneratorConfig:
         "--seed",
         type=int,
         default=42,
-        help="deterministic random seed (default: %(default)s)",
+        help=(
+            "random seed for metric choices, values, services, and tags; "
+            "event IDs remain unique (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--request-timeout",
@@ -145,9 +148,8 @@ def metric_value(metric_name: str, rng: random.Random) -> float:
 
 def build_event(config: GeneratorConfig, rng: random.Random) -> dict[str, object]:
     metric_name = rng.choices(METRIC_NAMES, weights=METRIC_WEIGHTS, k=1)[0]
-    event_id = UUID(int=rng.getrandbits(128), version=4)
     return {
-        "event_id": str(event_id),
+        "event_id": str(uuid4()),
         "service": rng.choice(config.services),
         "metric_name": metric_name,
         "value": metric_value(metric_name, rng),

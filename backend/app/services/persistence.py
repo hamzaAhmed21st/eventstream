@@ -14,6 +14,7 @@ from app.schemas.events import StreamEnvelope
 class PersistenceOutcome(StrEnum):
     INSERTED = "inserted"
     DUPLICATE = "duplicate"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
 
 
 class EventPersistenceService:
@@ -42,11 +43,24 @@ class EventPersistenceService:
                     await session.flush()
             except IntegrityError:
                 await session.rollback()
-                existing_id = await session.scalar(
-                    select(MetricEvent.id).where(MetricEvent.event_id == event.event_id)
+                existing_event = await session.scalar(
+                    select(MetricEvent).where(MetricEvent.event_id == event.event_id)
                 )
-                if existing_id is None:
+                if existing_event is None:
                     raise
-                return PersistenceOutcome.DUPLICATE
+                if _matches_client_event(existing_event, envelope):
+                    return PersistenceOutcome.DUPLICATE
+                return PersistenceOutcome.IDEMPOTENCY_CONFLICT
         return PersistenceOutcome.INSERTED
 
+
+def _matches_client_event(existing: MetricEvent, envelope: StreamEnvelope) -> bool:
+    event = envelope.event
+    return (
+        existing.service == event.service
+        and existing.metric_name == event.metric_name.value
+        and existing.value == event.value
+        and existing.event_timestamp == event.timestamp
+        and existing.tags == event.tags
+        and existing.schema_version == event.schema_version
+    )

@@ -27,7 +27,7 @@ help:
 	@echo "  make test           Run backend and frontend tests"
 	@echo "  make lint           Run backend and frontend linters"
 	@echo "  make typecheck      Run Python and TypeScript type checks"
-	@echo "  make seed           Send deterministic synthetic events"
+	@echo "  make seed           Send unique events with seeded metric content"
 	@echo "  make verify         Run all non-destructive quality gates"
 
 setup:
