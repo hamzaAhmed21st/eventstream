@@ -9,15 +9,8 @@ import {
   YAxis,
 } from "recharts";
 
-import { METRIC_NAMES, type MetricEvent, type MetricName } from "../types/api";
-
-const METRIC_LABELS: Record<MetricName, string> = {
-  latency_ms: "Latency",
-  request_count: "Requests",
-  error_count: "Errors",
-  cpu_usage: "CPU",
-  memory_usage: "Memory",
-};
+import { METRIC_DISPLAY } from "../metrics";
+import { METRIC_NAMES, type MetricEvent } from "../types/api";
 
 interface EventMixChartProps {
   events: MetricEvent[];
@@ -27,7 +20,7 @@ export function EventMixChart({ events }: EventMixChartProps) {
   const chartData = useMemo(
     () =>
       METRIC_NAMES.map((metricName) => ({
-        metric: METRIC_LABELS[metricName],
+        metric: METRIC_DISPLAY[metricName].label,
         events: events.filter((event) => event.metric_name === metricName).length,
       })),
     [events],

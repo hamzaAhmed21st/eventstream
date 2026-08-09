@@ -133,6 +133,18 @@ class EventWorker:
             )
             return
 
+        if outcome is PersistenceOutcome.IDEMPOTENCY_CONFLICT:
+            logger.error(
+                "Conflicting reuse of event_id is permanently invalid and will be acknowledged",
+                extra={
+                    "event_name": "worker.message.idempotency_conflict",
+                    "stream_message_id": display_message_id,
+                    "event_id": str(envelope.event.event_id),
+                    "error_category": "IdempotencyConflict",
+                    "processing_stage": "idempotency_validation",
+                },
+            )
+
         try:
             acknowledged_count = await self._redis.xack(
                 self._settings.redis_stream,
@@ -162,14 +174,24 @@ class EventWorker:
                     "event_id": str(envelope.event.event_id),
                     "persistence_outcome": outcome.value,
                     "acknowledged_count": acknowledged_count,
+                    "processing_stage": "stream_acknowledgement",
                 },
             )
             return
 
+        is_conflict = outcome is PersistenceOutcome.IDEMPOTENCY_CONFLICT
         logger.info(
-            "Metric event safely processed and acknowledged",
+            (
+                "Permanently invalid idempotency conflict acknowledged"
+                if is_conflict
+                else "Metric event safely processed and acknowledged"
+            ),
             extra={
-                "event_name": "worker.message.acknowledged",
+                "event_name": (
+                    "worker.message.idempotency_conflict_acknowledged"
+                    if is_conflict
+                    else "worker.message.acknowledged"
+                ),
                 "stream_message_id": display_message_id,
                 "event_id": str(envelope.event.event_id),
                 "persistence_outcome": outcome.value,

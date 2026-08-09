@@ -2,49 +2,59 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any, Literal, Self
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.core.metrics import METRIC_SPECIFICATIONS, metric_value_contract_description
+from app.core.metrics import MetricName as MetricName
 
 MAX_TAGS = 20
 MAX_TAG_KEY_LENGTH = 64
 MAX_TAG_VALUE_LENGTH = 256
-MAX_ABSOLUTE_METRIC_VALUE = 1_000_000_000_000.0
-
-
-class MetricName(StrEnum):
-    LATENCY_MS = "latency_ms"
-    REQUEST_COUNT = "request_count"
-    ERROR_COUNT = "error_count"
-    CPU_USAGE = "cpu_usage"
-    MEMORY_USAGE = "memory_usage"
 
 
 class EventCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    event_id: UUID = Field(default_factory=uuid4)
-    service: str = Field(max_length=128)
-    metric_name: MetricName
+    event_id: UUID = Field(
+        description="Stable client-generated identity; reuse it when retrying the same event."
+    )
+    service: str = Field(
+        max_length=128,
+        description=(
+            "NUL-free service name, normalized to lowercase without surrounding whitespace; "
+            "maximum 128 characters after normalization."
+        ),
+    )
+    metric_name: MetricName = Field(description="Metric contract applied to value.")
     value: float = Field(
         allow_inf_nan=False,
-        ge=-MAX_ABSOLUTE_METRIC_VALUE,
-        le=MAX_ABSOLUTE_METRIC_VALUE,
         strict=True,
-        description="Finite telemetry value within the shared ingestion safety bound.",
+        description=metric_value_contract_description(),
     )
-    timestamp: datetime
-    tags: dict[str, str] = Field(default_factory=dict)
-    schema_version: int = Field(default=1, strict=True)
+    timestamp: datetime = Field(description="Timezone-aware event time; normalized to UTC.")
+    tags: dict[str, str] = Field(
+        default_factory=dict,
+        description="Up to 20 NUL-free string key/value tags.",
+    )
+    schema_version: int = Field(
+        default=1,
+        strict=True,
+        description="Event schema version; the MVP supports version 1.",
+    )
 
-    @field_validator("service")
+    @field_validator("service", mode="before")
     @classmethod
-    def normalize_service(cls, value: str) -> str:
+    def normalize_service(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
         normalized = value.strip().lower()
         if not normalized:
             raise ValueError("service cannot be empty")
+        if "\x00" in normalized:
+            raise ValueError("service cannot contain NUL characters")
         return normalized
 
     @field_validator("value")
@@ -53,6 +63,15 @@ class EventCreate(BaseModel):
         if not math.isfinite(value):
             raise ValueError("value must be finite")
         return value
+
+    @model_validator(mode="after")
+    def require_metric_value_semantics(self) -> Self:
+        specification = METRIC_SPECIFICATIONS[self.metric_name]
+        if not specification.minimum <= self.value <= specification.maximum:
+            raise ValueError(specification.describe_value(self.metric_name))
+        if specification.integral and not self.value.is_integer():
+            raise ValueError(specification.describe_value(self.metric_name))
+        return self
 
     @field_validator("timestamp")
     @classmethod
@@ -74,8 +93,12 @@ class EventCreate(BaseModel):
         for key, tag_value in value.items():
             if not key:
                 raise ValueError("tag keys cannot be empty")
+            if "\x00" in key:
+                raise ValueError("tag keys cannot contain NUL characters")
             if len(key) > MAX_TAG_KEY_LENGTH:
                 raise ValueError(f"tag keys cannot exceed {MAX_TAG_KEY_LENGTH} characters")
+            if "\x00" in tag_value:
+                raise ValueError("tag values cannot contain NUL characters")
             if len(tag_value) > MAX_TAG_VALUE_LENGTH:
                 raise ValueError(f"tag values cannot exceed {MAX_TAG_VALUE_LENGTH} characters")
         return value

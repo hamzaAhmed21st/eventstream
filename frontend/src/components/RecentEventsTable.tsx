@@ -1,12 +1,5 @@
-import type { MetricEvent, MetricName } from "../types/api";
-
-const METRIC_LABELS: Record<MetricName, string> = {
-  latency_ms: "Latency",
-  request_count: "Requests",
-  error_count: "Errors",
-  cpu_usage: "CPU",
-  memory_usage: "Memory",
-};
+import { METRIC_DISPLAY } from "../metrics";
+import type { MetricEvent } from "../types/api";
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
@@ -96,7 +89,7 @@ export function RecentEventsTable({ events, total }: RecentEventsTableProps) {
                   </td>
                   <td data-label="Metric">
                     <span className={`metric-pill metric-pill--${event.metric_name}`}>
-                      {METRIC_LABELS[event.metric_name]}
+                      {METRIC_DISPLAY[event.metric_name].label}
                     </span>
                   </td>
                   <td data-label="Value" className="numeric-cell event-value">

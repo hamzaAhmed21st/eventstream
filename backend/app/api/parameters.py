@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from app.schemas.events import MetricName
 from app.services.queries import EventFilters
 
-MAX_EVENT_PAGE = 1_000_000
+MAX_EVENT_PAGE = 1_000
 
 
 def build_event_filters(
