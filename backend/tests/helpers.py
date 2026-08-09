@@ -13,10 +13,14 @@ class FakeRedis:
         *,
         fail_ping: bool = False,
         fail_xadd: bool = False,
+        fail_xack: bool = False,
+        xack_result: int | None = None,
         operation_trace: list[str] | None = None,
     ) -> None:
         self.fail_ping = fail_ping
         self.fail_xadd = fail_xadd
+        self.fail_xack = fail_xack
+        self.xack_result = xack_result
         self.operation_trace = operation_trace
         self.added: list[tuple[str, Mapping[str, str]]] = []
         self.acknowledged: list[tuple[str, str, tuple[RedisScalar, ...]]] = []
@@ -58,8 +62,10 @@ class FakeRedis:
     async def xack(self, name: str, groupname: str, *ids: RedisScalar) -> int:
         if self.operation_trace is not None:
             self.operation_trace.append("xack")
+        if self.fail_xack:
+            raise RedisError("test Redis acknowledgement failure")
         self.acknowledged.append((name, groupname, ids))
-        return len(ids)
+        return len(ids) if self.xack_result is None else self.xack_result
 
     async def aclose(self) -> None:
         return None
