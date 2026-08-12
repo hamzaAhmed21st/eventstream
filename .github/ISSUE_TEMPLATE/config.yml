@@ -1,5 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Security reporting guidance
-    url: https://github.com/hamzaAhmed21st/eventstream/blob/main/SECURITY.md
-    about: Use the bug form only for non-sensitive defects; never post secrets or exploit details.
