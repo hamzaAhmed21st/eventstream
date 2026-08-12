@@ -23,16 +23,5 @@ For a safe report, include the affected revision, component, impact, minimal rep
 suggested mitigation when available. Remove credentials and unrelated event data. No response-time
 guarantee is made.
 
-## Protect local data
-
-- Never add `.env`, passwords, tokens, private keys, database files, or captured sensitive events
-  to the repository.
-- Treat application logs, command output, fixtures, screenshots, and shell history as possible
-  disclosure paths.
-- Keep database operations parameterized and validate every client-controlled event field.
-- Keep structured failure logs to safe identifiers and error categories; do not log credentials or
-  raw connection strings.
-- Rotate an exposed credential immediately; removing it from a later revision is insufficient.
-
-Only `.env.example` contains shareable example values. Runtime secrets belong in environment
-variables or an appropriate external secret store.
+Only `.env.example` contains shareable example values. Keep credentials, local data, and sensitive
+event or log content out of the repository, and rotate any credential that is exposed.

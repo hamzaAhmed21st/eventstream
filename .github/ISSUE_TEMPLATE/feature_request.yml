@@ -33,14 +33,11 @@ body:
     attributes:
       label: Roadmap area
       options:
-        - MVP correctness
-        - Pending-message recovery and retries
-        - Alerts and rollups
-        - Authentication and multi-tenancy
-        - Streaming UI updates
-        - Observability and tracing
-        - Deployment
-        - Developer experience
+        - Stream reliability and retention
+        - Query correctness and scale
+        - Operability
+        - Contract management
+        - Security and delivery
         - Other
     validations:
       required: true
