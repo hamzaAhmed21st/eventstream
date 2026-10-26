@@ -1,5 +1,24 @@
 # EventStream
 
+[![CI](https://github.com/hamzaAhmed21st/eventstream/actions/workflows/ci.yml/badge.svg)](https://github.com/hamzaAhmed21st/eventstream/actions/workflows/ci.yml)
+
+**Submit service metrics over HTTP, process them asynchronously, and explore persisted results in a React dashboard.**
+
+## Start here
+
+- **See the product:** [dashboard preview](#dashboard).
+- **Inspect the engineering:** [claim-to-code evidence guide](docs/EVIDENCE.md).
+- **Check execution:** [recorded CI run](https://github.com/hamzaAhmed21st/eventstream/actions/runs/31624110911) — 110 backend tests and 6 frontend tests passed, plus the Compose pipeline smoke test, at commit `eec8bbe`.
+- **Try it locally:** [quick start](#quick-start) and [five-minute demo](#five-minute-local-demo).
+
+| Engineering focus | Implemented behavior |
+| --- | --- |
+| Asynchronous processing | FastAPI publishes to Redis Streams; consumer-group workers persist events to PostgreSQL. |
+| Data integrity | Stable event IDs, database uniqueness, transactional writes, and exact-replay versus conflicting-payload checks. |
+| Verification | Real Redis/PostgreSQL integration tests, migration checks, and a containerized ingestion-to-query smoke test. |
+
+**Scope:** A local portfolio application. Duplicate-safe persistence is implemented; automatic recovery of pending messages and production load benchmarks are not. The Compose smoke test reaches the frontend proxy; React rendering is tested separately.
+
 EventStream is a compact metrics pipeline that demonstrates validated HTTP ingestion,
 asynchronous Redis Stream processing, idempotent PostgreSQL persistence, and a React dashboard
 driven by real query results.
