@@ -1,8 +1,8 @@
 # EventStream: implementation and verification
 
-This guide connects the pipeline's claims to code, test assertions, and a recorded successful execution.
+For a short code review, read [transactional persistence](../backend/app/services/persistence.py), then follow the [worker acknowledgment path](../backend/app/workers/main.py). The [integration tests](../backend/tests/integration/test_pipeline.py) check exact replay and conflicting IDs against real PostgreSQL and Redis, plus pending-message behavior using real Redis and an injected persistence exception.
 
-## Claim-to-code map
+## Implementation and tests
 
 | Accomplishment | Implementation | Verification |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ The [Compose smoke test](../.github/workflows/ci.yml) runs actual API, Redis, wo
 4. An identical replay creates another stream entry but leaves **one PostgreSQL row**.
 5. The frontend nginx proxy returns the real event and summary API responses.
 
-This proves the exercised ingestion-to-query path through the frontend proxy. It is **not a browser-driven end-to-end rendering test**, a throughput benchmark, or a production availability guarantee. Counts refer to the linked historical run; the README badge links to current CI.
+This run exercises ingestion through query responses from the frontend proxy. React rendering is tested separately with mocked HTTP responses; the Compose smoke test does not drive a browser. Counts refer to the linked historical run; the README badge links to current CI.
 
 ## Important design decisions
 
@@ -49,6 +49,12 @@ Follow the [quick start](../README.md#quick-start), then the [five-minute demo](
 
 ## Current boundaries
 
-Automatic pending-message recovery, bounded retries, dead-letter handling, authentication, distributed tracing, and formal load benchmarks are not implemented. The dashboard polls; it does not use WebSockets. See the [roadmap](../ROADMAP.md) for future work.
+- Pending messages are not automatically reclaimed, retried with bounds, or dead-lettered. The injected persistence failure checks pending state, not recovery after a real database outage.
+- Redis AOF uses `appendfsync everysec`; this is not a zero-loss delivery guarantee.
+- Summaries scan retained events and pagination uses offsets without snapshot consistency.
+- Alerting, worker heartbeat/lag monitoring, authentication, TLS, rate limiting, tenant isolation, distributed tracing, deployment automation, and formal load benchmarks are not implemented.
+- The dashboard polls rather than using WebSockets or Server-Sent Events. Its latency card summarizes client-submitted values, not pipeline processing time.
+
+See the [roadmap](../ROADMAP.md) for future work.
 
 [Back to the project](../README.md)

@@ -2,51 +2,40 @@
 
 [![CI](https://github.com/hamzaAhmed21st/eventstream/actions/workflows/ci.yml/badge.svg)](https://github.com/hamzaAhmed21st/eventstream/actions/workflows/ci.yml)
 
-**Submit service metrics over HTTP, process them asynchronously, and explore persisted results in a React dashboard.**
+Send service metrics over HTTP, process them asynchronously, and explore the stored events in a React dashboard.
 
-## Start here
-
-- **See the product:** [dashboard preview](#dashboard).
-- **Inspect the engineering:** [claim-to-code evidence guide](docs/EVIDENCE.md).
-- **Check execution:** [recorded CI run](https://github.com/hamzaAhmed21st/eventstream/actions/runs/31624110911) — 110 backend tests and 6 frontend tests passed, plus the Compose pipeline smoke test, at commit `eec8bbe`.
-- **Try it locally:** [quick start](#quick-start) and [five-minute demo](#five-minute-local-demo).
-
-| Engineering focus | Implemented behavior |
-| --- | --- |
-| Asynchronous processing | FastAPI publishes to Redis Streams; consumer-group workers persist events to PostgreSQL. |
-| Data integrity | Stable event IDs, database uniqueness, transactional writes, and exact-replay versus conflicting-payload checks. |
-| Verification | Real Redis/PostgreSQL integration tests, migration checks, and a containerized ingestion-to-query smoke test. |
-
-**Scope:** A local portfolio application. Duplicate-safe persistence is implemented; automatic recovery of pending messages and production load benchmarks are not. The Compose smoke test reaches the frontend proxy; React rendering is tested separately.
-
-EventStream is a compact metrics pipeline that demonstrates validated HTTP ingestion,
-asynchronous Redis Stream processing, idempotent PostgreSQL persistence, and a React dashboard
-driven by real query results.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    C[HTTP client] -->|POST /api/v1/events| A[FastAPI]
-    A -->|XADD| R[(Redis Stream)]
-    R -->|XREADGROUP| W[Worker]
-    W -->|transactional insert| P[(PostgreSQL)]
-    W -->|XACK after safe database outcome| R
-    P -->|events and summaries| A
-    A -->|JSON| D[React dashboard]
-```
-
-The API returns `202 Accepted` after Redis accepts a validated event. Persistence happens later:
-the worker commits a new row, or confirms the result of a duplicate identifier, before it
-acknowledges the stream message. PostgreSQL is the query system of record; the dashboard never
-substitutes mocked values for failed API requests.
-
-See [the architecture guide](docs/architecture.md) for the detailed sequence, invariants, and
-failure boundaries.
+**FastAPI · Redis Streams · PostgreSQL · React · TypeScript · Docker Compose**
 
 ## Dashboard
 
 ![EventStream metrics dashboard](docs/images/dashboard.png)
+
+[Run locally](#quick-start) · [Try a duplicate event](#five-minute-local-demo) · [Code and test evidence](docs/EVIDENCE.md)
+
+## What happens to an event?
+
+The API validates the payload and returns `202 Accepted` after Redis accepts it. A consumer-group worker then writes it to PostgreSQL, and the dashboard queries the stored results.
+
+- **An exact replay keeps one database row.** Client-generated event IDs and a database uniqueness constraint handle repeated submissions.
+- **A conflicting payload preserves the original event.** The worker detects the reused ID, logs the conflict, and acknowledges that delivery.
+- **A database failure leaves the delivery pending.** Acknowledgment follows a successful commit or duplicate/conflict verification. Automatic recovery of pending messages is still future work.
+
+The [integration tests](backend/tests/integration/test_pipeline.py) exercise real Redis and PostgreSQL. A separate [Compose smoke test](.github/workflows/ci.yml) submits an event, checks persistence and replay behavior, and queries through the frontend proxy. See the [test details](docs/EVIDENCE.md#recorded-ci-evidence).
+
+## Architecture
+
+```mermaid
+flowchart TD
+    C[HTTP client] -->|POST event| A[FastAPI]
+    A -->|XADD| R[(Redis Stream)]
+    R -->|XREADGROUP| W[Worker]
+    W -->|transactional insert| P[(PostgreSQL)]
+    W -->|XACK after database outcome| R
+    P -->|events and summaries| A
+    A -->|JSON| D[React dashboard]
+```
+
+PostgreSQL supplies the query results. The dashboard polls every ten seconds and displays API errors when requests fail. [Architecture details](docs/architecture.md).
 
 ## Stack
 
@@ -57,7 +46,7 @@ failure boundaries.
 
 ## Quick start
 
-Prerequisites are Python 3.14.6 through uv, Node.js 22+, pnpm 10+, Docker Desktop with Compose,
+Prerequisites are Python 3.14.6 through uv, Node.js 24 (as used in CI), pnpm 11.20.0, Docker Desktop with Compose,
 and `make`.
 
 ```bash
@@ -181,13 +170,6 @@ GitHub Actions repeats locked dependency, lint, type, test, migration, frontend-
 and real Compose event-path checks. Integration tests use `eventstream_test` and Redis database
 15; they must never target normal development data.
 
-## Known limitations
+## Current scope
 
-- Pending messages are not automatically reclaimed, retried with bounds, or dead-lettered.
-- Redis AOF with `appendfsync everysec` is not synchronous replication or a zero-loss guarantee.
-- Summaries query raw retained events and pagination is offset-based without snapshot consistency.
-- Worker lag/heartbeat health, authentication, TLS, rate limiting, tenant isolation, formal load
-  testing, distributed tracing, and deployment automation are not included.
-- The dashboard polls; it does not use WebSockets or Server-Sent Events.
-
-Future engineering work is tracked in [ROADMAP.md](ROADMAP.md).
+This is a local metrics pipeline with duplicate-safe persistence. Pending-message recovery, alerting, and production load benchmarks are not implemented. The dashboard's latency card summarizes submitted `latency_ms` values; it does not measure this pipeline's processing latency. See [implementation and test limits](docs/EVIDENCE.md#current-boundaries) and the [roadmap](ROADMAP.md).
